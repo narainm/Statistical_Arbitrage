@@ -1,128 +1,199 @@
-Statistical Arbitrage — Avellaneda & Lee (2010
+# **Statistical Arbitrage — Avellaneda & Lee (2010)**
 
-Here’s a Python implementation of a mean-reversion strategy, inspired by the framework in Avellaneda and Lee’s 2010 paper on statistical arbitrage in US equities.
+Implementation of a statistical arbitrage strategy, inspired by the framework in Avellaneda and Lee’s 2010 paper on U.S. equities.
 
-Overview
+---
 
-This project walks through how to build a market-neutral, mean-reversion trading system using factor models. Basically, you’re stripping out broad market effects (the factors), modeling the leftover returns as mean-reverting, and trading whenever stocks stray too far from their “normal” range.
+## **Overview**
 
-The system handles everything—from factor modeling (with PCA or sector ETFs), constructing residuals, fitting an Ornstein–Uhlenbeck model, generating signals (s-scores), building portfolios, and running backtests with performance tracking.
+This project walks through how to build a market-neutral, mean-reversion trading system using factor models.
 
-Just to be clear: this is for research and learning. It’s not a production trading bot.
+The idea is pretty simple:
 
-How It Works
+* Strip out broad market and sector effects (factors)
+* Model the leftover (residual) returns as mean-reverting
+* Trade when stocks deviate too far from their “normal” range
 
-1. Factor Model
+The system covers everything end-to-end:
 
-First off, you get rid of the big-picture movements—the stuff driven by the overall market or big sectors. There are two ways:
+* factor modeling (PCA or sector ETFs)
+* residual construction
+* Ornstein–Uhlenbeck modeling
+* signal generation (s-scores)
+* portfolio construction
+* backtesting and performance tracking
 
-- PCA: Find statistical factors in returns.
-- ETF model: Regress each stock against sector ETFs.
+> This is a research/learning project — not a production trading system.
 
-What you have left are “residual returns”—the idiosyncratic moves of each stock.
+---
 
-2. OU / AR(1) Model
+## **How It Works**
 
-Once you have those residuals, you treat them as mean-reverting using the Ornstein-Uhlenbeck process. Here's the math:
+### **1. Factor Model**
 
+First, remove the big-picture movements driven by the market or sectors.
+
+Two approaches:
+
+* **PCA** → extract statistical factors from returns
+* **ETF model** → regress each stock on its sector ETF
+
+What’s left are **residual returns** — the idiosyncratic moves of each stock.
+
+---
+
+### **2. OU / AR(1) Model**
+
+Those residuals are modeled as mean-reverting using an Ornstein–Uhlenbeck process:
+
+```
 dX = kappa * (mu - X) * dt + sigma * dW
+```
 
-Or, discretely:
+In discrete form:
+
+```
 X_{t+1} = a + b * X_t + noise
+```
 
-You estimate three things:
-- kappa: How fast the mean-reversion happens.
-- mu: Where the process settles over time.
-- sigma_eq: The equilibrium volatility.
+From this, we estimate:
 
-3. S-score (Signal)
+* **kappa** → speed of mean reversion
+* **mu** → long-run equilibrium level
+* **sigma_eq** → equilibrium volatility
 
-The s-score tells you how far a stock is from its “normal” value:
+---
 
+### **3. S-score (Signal)**
+
+The signal is based on how far a stock is from its equilibrium:
+
+```
 s = (X_t - mu_adj) / sigma_eq
+```
 
-- X_t is the running sum of residuals.
-- mu_adj adjusts for the cross-sectional average.
+* `X_t` = cumulative residual for the stock
+* `mu_adj` = cross-sectional adjusted mean
 
-If s < 0, the stock’s cheap—go long. If s > 0, it’s pricey—go short.
+Interpretation:
 
-4. Trading Logic
+* **s < 0** → relatively cheap → go long
+* **s > 0** → relatively expensive → go short
 
-The strategy is simple: jump in when a stock’s s-score is way off; get out when it drifts back to normal.
+---
 
-Positions are either:
-- Long
-- Short
-- Flat (no position)
+### **4. Trading Logic**
 
-5. Portfolio Construction
+The strategy is simple:
 
-Positions are dollar-neutral and equally weighted. You can go a step further and adjust for factor neutrality if you want.
+* Enter when the deviation is large
+* Exit when it mean-reverts
 
-6. Backtesting
+Positions are:
 
-You rebalance every day, factor in transaction costs, and track key stats like Sharpe ratio and drawdown.
+* Long
+* Short
+* Flat
 
-Project Structure
+---
 
+### **5. Portfolio Construction**
+
+* Dollar-neutral long/short portfolio
+* Equal-weight positions
+* Optional factor-neutral adjustment
+
+---
+
+### **6. Backtesting**
+
+The backtest includes:
+
+* daily rebalancing
+* transaction costs
+* performance metrics (Sharpe, drawdown, etc.)
+
+---
+
+## **Project Structure**
+
+```
 stat_arb/
 ├── data.py        # gets price and volume data
-├── factors.py     # builds PCA / ETF models
-├── ou_model.py    # fits OU model & calculates s-scores
-├── signals.py     # triggers trades
-├── portfolio.py   # sizes positions
-├── backtest.py    # simulates PnL
-├── metrics.py     # tracks performance stats
-├── main.py        # runs the whole pipeline
+├── factors.py     # PCA / ETF models
+├── ou_model.py    # OU model + s-scores
+├── signals.py     # trading logic
+├── portfolio.py   # position sizing
+├── backtest.py    # PnL simulation
+├── metrics.py     # performance stats
+├── main.py        # runs everything
 └── README.md
+```
 
-How to Run
+---
+
+## **How to Run**
 
 Install dependencies:
 
+```bash
 pip install pandas numpy yfinance scikit-learn matplotlib
 python main.py
+```
 
-On the first run, data downloads automatically. Later runs use stored data.
+On the first run, data downloads automatically. Later runs use cached data.
 
-Key Parameters
+---
 
-| Parameter            | Description                       |
-| -------------------- | --------------------------------- |
-| FACTOR_MODEL         | "PCA" or "ETF"                    |
-| PCA_WINDOW           | Rolling window for PCA (252)       |
-| OU_WINDOW            | OU estimation window (60)          |
-| ENTRY_THRESH         | Threshold for trade entry          |
-| EXIT_THRESH          | Threshold for trade exit           |
-| TC_BPS               | Transaction cost (bps)             |
-| USE_VOLUME_ADJ       | Optional volume-based scaling      |
-| USE_FACTOR_NEUTRAL   | Reduce factor exposure             |
+## **Key Parameters**
 
-Limitations
+| Parameter          | Description                     |
+| ------------------ | ------------------------------- |
+| FACTOR_MODEL       | "PCA" or "ETF"                  |
+| PCA_WINDOW         | Rolling window for PCA (252)    |
+| OU_WINDOW          | OU estimation window (60)       |
+| ENTRY_THRESH       | Entry threshold                 |
+| EXIT_THRESH        | Exit threshold                  |
+| TC_BPS             | Transaction cost (bps)          |
+| USE_VOLUME_ADJ     | Volume-based scaling (optional) |
+| USE_FACTOR_NEUTRAL | Reduce factor exposure          |
 
-A few caveats:
-- There’s survivorship bias—you’re using today’s stocks, not the historical universe.
-- The universe is a lot smaller than the original paper.
-- Execution is simplified; there's no slippage model.
-- Flat transaction costs, no fancy structure for factors.
+---
 
-So, your results won’t match the original study.
+## **Limitations**
 
-What This Project Focuses On
+A few things to keep in mind:
 
-The main goals here:
-- Get hands-on with factor models
-- See how mean reversion works
-- Build a full research workflow
-- Debug trading signals, see what works
+* Survivorship bias — using current stocks, not historical membership
+* Smaller universe than the original paper
+* Simplified execution (no slippage model)
+* Flat transaction cost assumption
+* Simplified factor setup
 
-References
+Because of this, results won’t match the original paper exactly.
 
-- Avellaneda, M. & Lee, J.H. (2010). Statistical Arbitrage in the US Equities Market. Quantitative Finance.
-- Khandani, A.E. & Lo, A.W. (2007). What happened to the quants in August 2007?
+---
 
-Final Note
+## **What This Project Focuses On**
 
-There have been a bunch of iterations—fixing how signals are defined, tweaking residuals, sorting out scaling and turnover.
+This is mainly about:
 
-What you see now works pretty well for research and learning.
+* understanding factor models
+* modeling mean reversion properly
+* building a full research pipeline
+* debugging trading signals
+
+---
+
+## **References**
+
+* Avellaneda, M. & Lee, J.H. (2010). *Statistical Arbitrage in the US Equities Market*. Quantitative Finance.
+* Khandani, A.E. & Lo, A.W. (2007). *What happened to the quants in August 2007?*
+
+---
+
+## **Final Note**
+
+This project went through a lot of iteration — fixing signal definitions, residual construction, scaling issues, and turnover.
+
+The current version is stable and works well for research and learning.
