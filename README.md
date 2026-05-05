@@ -1,181 +1,128 @@
-# Statistical Arbitrage — Avellaneda & Lee (2010) | v2
+Statistical Arbitrage — Avellaneda & Lee (2010
 
-Python implementation of the mean-reversion statistical arbitrage strategy from:
+Here’s a Python implementation of a mean-reversion strategy, inspired by the framework in Avellaneda and Lee’s 2010 paper on statistical arbitrage in US equities.
 
-> **Avellaneda, M. & Lee, J.H. (2010).** Statistical arbitrage in the US equities market. *Quantitative Finance, 10(7), 761–782.*
+Overview
 
-This is a research-level implementation that uses the Ornstein-Uhlenbeck model from the paper, a PCA-based factor model, ETF-based factor model, volume-adjusted signals, and optional factor-neutral portfolio construction.
+This project walks through how to build a market-neutral, mean-reversion trading system using factor models. Basically, you’re stripping out broad market effects (the factors), modeling the leftover returns as mean-reverting, and trading whenever stocks stray too far from their “normal” range.
 
-**This is a research project, not a production system. Performance results may not replicate the paper due to survivorship bias, universe size, and data differences. See Limitations below.**
+The system handles everything—from factor modeling (with PCA or sector ETFs), constructing residuals, fitting an Ornstein–Uhlenbeck model, generating signals (s-scores), building portfolios, and running backtests with performance tracking.
 
----
+Just to be clear: this is for research and learning. It’s not a production trading bot.
 
-## What Changed from v1
+How It Works
 
-| Feature | v1 | v2 |
-|---|---|---|
-| Signal model | Rolling z-score | OU / AR(1) s-score (Appendix A) |
-| PCA window | 60 days | 252 days (matches paper) |
-| ETF factor model | No | Yes |
-| Volume adjustment | No | Yes (section 6), OFF by default |
-| Factor neutrality | No | Optional (linear algebra) |
-| Mean centering | No | Yes (equation 18) |
-| MAX_KAPPA filter | No | Yes (40.0, rejects degenerate fits) |
-| Diagnostics | No | Yes (print_diagnostics in metrics.py) |
+1. Factor Model
 
----
+First off, you get rid of the big-picture movements—the stuff driven by the overall market or big sectors. There are two ways:
 
-## Project Structure
+- PCA: Find statistical factors in returns.
+- ETF model: Regress each stock against sector ETFs.
 
-```
-stat_arb_v2/
-├── data.py         — Download prices + volume, sector ETF mapping
-├── factors.py      — PCA residuals + ETF regression residuals
-├── ou_model.py     — AR(1) fitting, OU params, s-score, volume adjustment
-├── signals.py      — Position state machine (bang-bang rule)
-├── portfolio.py    — Dollar-neutral weights + optional factor neutrality
-├── backtest.py     — P&L simulation with transaction costs
-├── metrics.py      — Sharpe, drawdown, rolling Sharpe, regime analysis, diagnostics
-├── main.py         — Runs everything, produces charts
-├── research_log.md — Test iterations and bug history
-└── README.md
-```
+What you have left are “residual returns”—the idiosyncratic moves of each stock.
 
----
+2. OU / AR(1) Model
 
-## The OU Model
+Once you have those residuals, you treat them as mean-reverting using the Ornstein-Uhlenbeck process. Here's the math:
 
-The paper models the idiosyncratic residual X(t) as an Ornstein-Uhlenbeck process:
-
-```
 dX = kappa * (mu - X) * dt + sigma * dW
-```
 
-In discrete time this is an AR(1) model:
-
-```
+Or, discretely:
 X_{t+1} = a + b * X_t + noise
-```
 
-From the AR(1) coefficients we recover:
-- `kappa = -log(b) * 252`  — mean-reversion speed
-- `mu = a / (1 - b)`       — long-run mean
-- `sigma_eq = std(noise) / sqrt(1 - b^2)`  — equilibrium volatility
+You estimate three things:
+- kappa: How fast the mean-reversion happens.
+- mu: Where the process settles over time.
+- sigma_eq: The equilibrium volatility.
 
-### S-score formula
+3. S-score (Signal)
 
-The **s-score** is:
+The s-score tells you how far a stock is from its “normal” value:
 
-```
 s = (X_t - mu_adj) / sigma_eq
-```
 
-where `mu_adj = mu - mean(mu across all stocks)` (cross-sectional centring, equation 18 in the paper), and `X_t` is the current cumulative residual for this specific stock.
+- X_t is the running sum of residuals.
+- mu_adj adjusts for the cross-sectional average.
 
-**Important note on the simplified formula.** Appendix A of the paper states that because `X_60 = 0` by construction (their OLS regression forces the residuals to sum to zero within each window), the s-score simplifies to `s = -mu / sigma_eq`. That simplification does **not** apply here. In this implementation, the cumulative residual series is mean-centred (subtract the mean of the window) but `X_t` at the end of the window is not constrained to zero. We therefore use the full formula `s = (X_t - mu_adj) / sigma_eq`.
+If s < 0, the stock’s cheap—go long. If s > 0, it’s pricey—go short.
 
-Using the simplified formula `-mu / sigma_eq` when `X_t != 0` was one of the bugs in earlier versions (see Test 1 in research_log.md).
+4. Trading Logic
 
-### Kappa filters
+The strategy is simple: jump in when a stock’s s-score is way off; get out when it drifts back to normal.
 
-We filter out stocks where kappa is outside the range [8.4, 40.0]:
-- `kappa < 8.4`: mean-reversion time > 30 days, too slow to be useful.
-- `kappa > 40.0`: mean-reversion time < ~6 days, almost certainly a degenerate fit.
+Positions are either:
+- Long
+- Short
+- Flat (no position)
 
----
+5. Portfolio Construction
 
-## Volume Adjustment
+Positions are dollar-neutral and equally weighted. You can go a step further and adjust for factor neutrality if you want.
 
-From section 6 of the paper: if a stock rallies on high volume, we trust the move more and fade it less. If it moves on low volume, we're more willing to bet against it.
+6. Backtesting
 
-Implemented as: `s_adjusted = s_raw / vol_ratio`
+You rebalance every day, factor in transaction costs, and track key stats like Sharpe ratio and drawdown.
 
-where `vol_ratio = today_volume / 10-day_average_volume`.
+Project Structure
 
-Toggle with `USE_VOLUME_ADJ = True/False` in main.py. **Default is False** until the base PCA + OU signal is validated (see research_log.md).
+stat_arb/
+├── data.py        # gets price and volume data
+├── factors.py     # builds PCA / ETF models
+├── ou_model.py    # fits OU model & calculates s-scores
+├── signals.py     # triggers trades
+├── portfolio.py   # sizes positions
+├── backtest.py    # simulates PnL
+├── metrics.py     # tracks performance stats
+├── main.py        # runs the whole pipeline
+└── README.md
 
----
+How to Run
 
-## Factor Neutrality
+Install dependencies:
 
-Beyond dollar-neutrality, we can reduce portfolio exposure to the systematic PCA factors via a least-squares projection:
-
-```
-delta_w = -L @ pinv(L^T L) @ exposure
-```
-
-where L is the factor loading matrix and `exposure = L^T @ w`.
-
-Toggle with `USE_FACTOR_NEUTRAL = True/False`. **Default is False.**
-
----
-
-## Diagnostics
-
-`metrics.print_diagnostics(sscore_df, kappa_df)` prints at the start of every run:
-
-- Number of valid s-score rows
-- Number of nonzero trading days
-- Average absolute s-score
-- Mean, median, min, max kappa (post-filter)
-
-This is useful for catching OU model failures early. A near-zero average |s-score| is a sign that the residual computation or cumsum logic has gone wrong.
-
----
-
-## How to Run
-
-```bash
-pip install pandas numpy yfinance scikit-learn matplotlib pyarrow
+pip install pandas numpy yfinance scikit-learn matplotlib
 python main.py
-```
 
-First run downloads data and caches it. Subsequent runs load from cache.
+On the first run, data downloads automatically. Later runs use stored data.
 
-**Runtime:** 5–10 minutes (the 252-day rolling PCA is slow across 2,500+ days).
+Key Parameters
 
----
+| Parameter            | Description                       |
+| -------------------- | --------------------------------- |
+| FACTOR_MODEL         | "PCA" or "ETF"                    |
+| PCA_WINDOW           | Rolling window for PCA (252)       |
+| OU_WINDOW            | OU estimation window (60)          |
+| ENTRY_THRESH         | Threshold for trade entry          |
+| EXIT_THRESH          | Threshold for trade exit           |
+| TC_BPS               | Transaction cost (bps)             |
+| USE_VOLUME_ADJ       | Optional volume-based scaling      |
+| USE_FACTOR_NEUTRAL   | Reduce factor exposure             |
 
-## Key Parameters (main.py)
+Limitations
 
-| Param | Default | Notes |
-|---|---|---|
-| `FACTOR_MODEL` | `"PCA"` | `"PCA"` or `"ETF"` |
-| `N_PCA_FACTORS` | `15` | Fixed factor count |
-| `PCA_VAR_THRESHOLD` | `None` | Set `0.50` for variance-based selection |
-| `PCA_WINDOW` | `252` | Correlation matrix window (matches paper) |
-| `OU_WINDOW` | `60` | OU estimation window (matches paper) |
-| `USE_VOLUME_ADJ` | `False` | Off until base signal is validated |
-| `USE_FACTOR_NEUTRAL` | `False` | Factor-neutral construction |
-| `TC_BPS` | `10.0` | Round-trip costs (matches paper) |
+A few caveats:
+- There’s survivorship bias—you’re using today’s stocks, not the historical universe.
+- The universe is a lot smaller than the original paper.
+- Execution is simplified; there's no slippage model.
+- Flat transaction costs, no fancy structure for factors.
 
----
+So, your results won’t match the original study.
 
-## Debugging Log / Model Iterations
+What This Project Focuses On
 
-See `research_log.md` for the full test history. Summary:
+The main goals here:
+- Get hands-on with factor models
+- See how mean reversion works
+- Build a full research workflow
+- Debug trading signals, see what works
 
-**Test 1:** Used `s = -mu / sigma_eq` (simplified formula). This is only valid when `X_60 = 0`, which is not the case here. Equity curve bled down. Also had the `return` indented inside the time loop (function exited after the first valid day).
+References
 
-**Test 2:** Switched to `s = (x_t - mu_adj) / sigma_eq` but `x_t` was picked up from a shared `x_series` variable that belonged to the last ticker processed in the loop. Every stock got the same (wrong) X_t. Signals were numerically non-trivial but cross-sectionally identical.
+- Avellaneda, M. & Lee, J.H. (2010). Statistical Arbitrage in the US Equities Market. Quantitative Finance.
+- Khandani, A.E. & Lo, A.W. (2007). What happened to the quants in August 2007?
 
-**Test 3:** Tried standardising the daily residuals before cumulating (`col_std = (col - mean) / std`). This killed signal magnitude — sigma_eq collapsed and almost no trades were opened.
+Final Note
 
-**Test 4 (current):** Cumulate raw residuals, then subtract the mean of the cumulative series (centre, don't standardise). Store `x_t_vals[ticker] = x_series[-1]` inside the ticker loop. Use `x_t = x_t_vals[ticker]` in the scoring step. Fixed the `return` indentation. Added `MAX_KAPPA = 40.0` filter.
+There have been a bunch of iterations—fixing how signals are defined, tweaking residuals, sorting out scaling and turnover.
 
----
-
-## Limitations
-
-- **Survivorship bias**: Universe is current S&P constituents, not point-in-time. This inflates performance.
-- **Small universe**: ~90 stocks vs 1,400+ in the paper. Less diversification, fewer opportunities.
-- **Short borrowing costs**: Not modeled.
-- **Execution**: Assumes close-to-close fills. Real execution has slippage beyond the flat 10bps.
-- **ETF model simplification**: Each stock regressed on one ETF. The paper discusses multi-ETF approaches.
-
----
-
-## References
-
-- Avellaneda, M. & Lee, J.H. (2010). Statistical arbitrage in the US equities market. *Quantitative Finance*, 10(7), 761–782.
-- Khandani, A.E. & Lo, A.W. (2007). What happened to the quants in August 2007? SSRN.
+What you see now works pretty well for research and learning.
